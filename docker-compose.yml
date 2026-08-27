@@ -1,0 +1,14 @@
+services:
+  llama-server:
+    build: .
+    image: frozenfishe/llama-server
+    ports:
+      - "8033:8080"
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
