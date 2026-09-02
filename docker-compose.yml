@@ -6,6 +6,7 @@ services:
       context: .
       args:
         HF_SLUG: unsloth/Qwen3.8-27B-GGUF:Q4_K_M
+        HF_TOKEN: ${HF_TOKEN:-}
     container_name: llama-server-qwen3.8-27b
     ports:
       - "8033:8033"
@@ -23,6 +24,7 @@ services:
       context: .
       args:
         HF_SLUG: unsloth/Qwen3.8-Flash-Next-GGUF:UD-Q4_K_XL
+        HF_TOKEN: ${HF_TOKEN:-}
     container_name: llama-server-qwen3.8-flash-next
     environment:
       LLAMA_CTX_SIZE: "262144"

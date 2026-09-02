@@ -44,6 +44,7 @@ ENV PATH="/opt/llama.cpp/build/bin:$PATH"
 FROM llama-base AS model
 
 ARG HF_SLUG
+ARG HF_TOKEN
 
 RUN hf download "${HF_SLUG%%:*}" --include "*${HF_SLUG#*:}*.gguf" --include "mmproj-BF16.gguf"
 # ---------------------------------------------------------------------------
