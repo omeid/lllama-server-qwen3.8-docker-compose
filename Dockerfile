@@ -84,4 +84,5 @@ CMD sh -c 'exec llama-server \
     -np "${LLAMA_NP}" \
     --cache-ram "${LLAMA_CACHE_RAM}" \
     --cache-idle-slots \
+    --host 0.0.0.0 \
     --port "${LLAMA_PORT}"'

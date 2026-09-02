@@ -9,7 +9,7 @@ services:
         HF_TOKEN: ${HF_TOKEN:-}
     container_name: llama-server-qwen3.8-27b
     ports:
-      - "8033:8033"
+      - "${IP:-127.0.0.1}:8033:8033"
     restart: unless-stopped
     deploy:
       resources:
@@ -31,7 +31,7 @@ services:
       LLAMA_CACHE_RAM: "405504"
       LLAMA_PORT: "8034"
     ports:
-      - "8034:8034"
+      - "${IP:-127.0.0.1}:8034:8034"
     restart: unless-stopped
     deploy:
       resources:
