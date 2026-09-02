@@ -1,14 +1,40 @@
+name: llama-server
+
 services:
-  llama-server:
-    build: .
-    image: frozenfishe/llama-server
+  qwen3.8-27b:
+    build:
+      context: .
+      args:
+        HF_SLUG: unsloth/Qwen3.8-27B-GGUF:Q4_K_M
+    container_name: llama-server-qwen3.8-27b
     ports:
-      - "8033:8080"
+      - "8033:8033"
     restart: unless-stopped
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
-              count: all
+              device_ids: ["0"]
+              capabilities: [gpu]
+
+  qwen3.8-flash-next:
+    build:
+      context: .
+      args:
+        HF_SLUG: unsloth/Qwen3.8-Flash-Next-GGUF:UD-Q4_K_XL
+    container_name: llama-server-qwen3.8-flash-next
+    environment:
+      LLAMA_CTX_SIZE: "262144"
+      LLAMA_CACHE_RAM: "405504"
+      LLAMA_PORT: "8034"
+    ports:
+      - "8034:8034"
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["1", "2", "3", "4", "5", "6"]
               capabilities: [gpu]

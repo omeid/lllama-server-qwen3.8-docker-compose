@@ -1,9 +1,7 @@
-# syntax=docker/dockerfile:1
-
 # ---------------------------------------------------------------------------
-# Stage 1: compile llama.cpp with the CUDA backend
+# Stage 1: llama.cpp (CUDA) + Hugging Face CLI on top of nvidia/cuda
 # ---------------------------------------------------------------------------
-FROM nvidia/cuda:12.6.2-devel-ubuntu22.04 AS llama-build
+FROM nvidia/cuda:12.6.2-devel-ubuntu22.04 AS llama-base
 
 # Pin a llama.cpp release tag for reproducible builds, e.g. b6135
 ARG LLAMA_CPP_REF=master
@@ -14,6 +12,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         cmake \
         git \
+        python3 \
+        python3-pip \
+        libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # ggml-cuda records a DT_NEEDED on the driver lib `libcuda.so.1`, but the
@@ -22,6 +23,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # runtime the NVIDIA container toolkit mounts the real driver over this path.
 RUN ln -s /usr/local/cuda/lib64/stubs/libcuda.so \
         /usr/lib/x86_64-linux-gnu/libcuda.so.1
+
+RUN pip3 install --no-cache-dir -U "huggingface_hub[cli]"
 
 WORKDIR /opt
 
@@ -33,61 +36,51 @@ RUN cmake -S llama.cpp -B llama.cpp/build \
         -DCMAKE_CUDA_ARCHITECTURES=${CUDAARCHS} \
     && cmake --build llama.cpp/build --config Release -j"$(nproc)"
 
+ENV PATH="/opt/llama.cpp/build/bin:$PATH"
+
 # ---------------------------------------------------------------------------
-# Stage 2: prepopulate the Hugging Face cache with the Q8 GGUF
+# Stage 2: download the model into the Hugging Face cache
 # ---------------------------------------------------------------------------
-FROM python:3.12-slim-bookworm AS model
+FROM llama-base AS model
 
-ARG HF_REPO=unsloth/Qwen3.8-27B-GGUF
-ARG HF_FILE_PATTERN=*Q8_0*.gguf
+ARG HF_SLUG
 
-RUN pip install --no-cache-dir -U "huggingface_hub[cli]" \
-    && hf download ${HF_REPO} --include "${HF_FILE_PATTERN}" \
-        --cache-dir /root/.cache/huggingface
-
-# Stable path for llama-server, pointing into the HF cache
-RUN mkdir -p /models \
-    && ln -s "$(find /root/.cache/huggingface -name '*.gguf' | head -n1)" \
-        /models/Qwen3.8-27B-Q8_0.gguf
-
+RUN hf download "${HF_SLUG%%:*}" --include "*${HF_SLUG#*:}*.gguf" --include "mmproj-BF16.gguf"
 # ---------------------------------------------------------------------------
 # Stage 3: runtime
 # ---------------------------------------------------------------------------
-FROM nvidia/cuda:12.6.2-runtime-ubuntu22.04
+FROM model AS server
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates \
-        libgomp1 \
-    && rm -rf /var/lib/apt/lists/*
+ARG HF_SLUG
+ENV HF_SLUG=${HF_SLUG}
 
-COPY --from=llama-build /opt/llama.cpp/build/bin/llama-server /usr/local/bin/llama-server
-# Prepopulated HF cache (so HF tooling resolves the model offline) + model
-COPY --from=model /root/.cache/huggingface /root/.cache/huggingface
-COPY --from=model /models /models
+ENV LLAMA_NGL=999 \
+    LLAMA_CTX_SIZE=131072 \
+    LLAMA_CACHE_TYPE_K=q8_0 \
+    LLAMA_CACHE_TYPE_V=q8_0 \
+    LLAMA_TEMP=0.75 \
+    LLAMA_TOP_P=0.85 \
+    LLAMA_TOP_K=40 \
+    LLAMA_MIN_P=0.05 \
+    LLAMA_PRESENCE_PENALTY=0.5 \
+    LLAMA_NP=1 \
+    LLAMA_CACHE_RAM=65536 \
+    LLAMA_PORT=8033
 
-# 6x RTX 3090 Ti = 144 GiB VRAM total
-#   Q8_0 weights            ~29 GiB
-#   256k ctx, q8_0 KV cache ~32 GiB
-#   -> fits with plenty of headroom for compute buffers
-ENV MODEL="/models/Qwen3.8-27B-Q8_0.gguf" \
-    HOST=0.0.0.0 \
-    PORT=8080 \
-    CTX_SIZE=256000 \
-    N_GPU_LAYERS=999 \
-    PARALLEL=4
-
-EXPOSE 8080
-
-CMD llama-server \
-    --model "$MODEL" \
-    --host "$HOST" \
-    --port "$PORT" \
-    --ctx-size "$CTX_SIZE" \
-    --n-gpu-layers "$N_GPU_LAYERS" \
+CMD sh -c 'exec llama-server \
+    -hf "${HF_SLUG}" \
+    -ngl "${LLAMA_NGL}" \
+    --ctx-size "${LLAMA_CTX_SIZE}" \
+    --cache-type-k "${LLAMA_CACHE_TYPE_K}" \
+    --cache-type-v "${LLAMA_CACHE_TYPE_V}" \
     --flash-attn on \
-    --cache-type-k q8_0 \
-    --cache-type-v q8_0 \
-    --parallel "$PARALLEL" \
-    --batch-size 2048 \
-    --ubatch-size 512 \
-    --jinja
+    --jinja \
+    --temp "${LLAMA_TEMP}" \
+    --top-p "${LLAMA_TOP_P}" \
+    --top-k "${LLAMA_TOP_K}" \
+    --min-p "${LLAMA_MIN_P}" \
+    --presence-penalty "${LLAMA_PRESENCE_PENALTY}" \
+    -np "${LLAMA_NP}" \
+    --cache-ram "${LLAMA_CACHE_RAM}" \
+    --cache-idle-slots \
+    --port "${LLAMA_PORT}"'
